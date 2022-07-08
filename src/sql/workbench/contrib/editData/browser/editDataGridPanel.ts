@@ -62,7 +62,6 @@ export class EditDataGridPanel extends GridParentComponent {
 	private noAutoSelectOnRender = false;
 	// Current selected cell state
 	private previousSavedCell: { row: number, column: number, isEditable: boolean, isDirty: boolean };
-	private lastClickedCell: { row: number, column: number, isEditable: boolean };
 	private currentEditCellValue: string;
 	private newRowVisible: boolean;
 	private removingNewRow: boolean;
@@ -73,9 +72,8 @@ export class EditDataGridPanel extends GridParentComponent {
 	// List of column names with their indexes stored.
 	private columnNameToIndex: { [columnNumber: number]: string } = {};
 	// Edit Data functions
-	public onActiveCellChanged: (event: Slick.OnActiveCellChangedEventArgs<any>) => void;
 	public onCellChange: (event: Slick.OnCellChangeEventArgs<any>) => void;
-	public onBeforeCellEditorDestroy: (event: Slick.OnBeforeCellEditorDestroyEventArgs<any>) => void;
+	public onBeforeCellEditorDestroy: (event: Slick.OnBeforeCellEditorDestroyEventArgs<any>) => Promise<void>;
 	public onIsCellEditValid: (row: number, column: number, newValue: any) => boolean;
 	public onIsColumnEditable: (column: number) => boolean;
 	public overrideCellFn: (rowNumber, columnId, value?, data?) => string;
@@ -172,11 +170,9 @@ export class EditDataGridPanel extends GridParentComponent {
 			return true;
 		};
 
-		this.onActiveCellChanged = this.onCellSelect;
-
 		this.onCellChange = (event: Slick.OnCellChangeEventArgs<any>): void => { };
 
-		this.onBeforeCellEditorDestroy = (event: Slick.OnBeforeCellEditorDestroyEventArgs<any>): void => {
+		this.onBeforeCellEditorDestroy = async (event: Slick.OnBeforeCellEditorDestroyEventArgs<any>): Promise<void> => {
 			let currentEditorValue = (event.editor as any).getValue();
 			let eventCell = event.grid.getActiveCell();
 			let isDirtyStatus = false;
@@ -189,7 +185,7 @@ export class EditDataGridPanel extends GridParentComponent {
 
 			let currentNewCell = { row: eventCell.row, column: eventCell.cell, isEditable: true, isDirty: isDirtyStatus };
 
-			this.submitCellTask(currentNewCell).catch(onUnexpectedError);
+			await this.submitCellTask(currentNewCell).catch(onUnexpectedError);
 		};
 
 		this.overrideCellFn = (rowNumber, columnId, value?, data?): string => {
@@ -294,45 +290,6 @@ export class EditDataGridPanel extends GridParentComponent {
 		};
 	}
 
-	async onCellSelect(event: Slick.OnActiveCellChangedEventArgs<any>): Promise<void> {
-		let row = event.row;
-		let column = event.cell;
-		let isEditable = true;
-
-		// Skip processing if the newly selected cell is undefined or we don't have column
-		// definition for the column (ie, the selection was reset)
-		if (row === undefined || column === undefined) {
-			return;
-		}
-
-		// Skip processing if the cell hasn't moved (eg, we reset focus to the previous cell after a failed update)
-		if (this.previousSavedCell.row === row && this.previousSavedCell.column === column && this.previousSavedCell.isDirty === false) {
-			return;
-		}
-
-		if (this.previousSavedCell.row !== row && this.previousSavedCell.column !== column && this.firstRender) {
-			return;
-		}
-
-		if (this.isRowDirty(this.previousSavedCell.row) && row !== this.previousSavedCell.row) {
-			await this.commitEditTask().then(() => {
-				this.currentEditCellValue = undefined;
-				this.lastClickedCell = { row, column, isEditable };
-				return Promise.resolve();
-			},
-				() => {
-					this.currentEditCellValue = undefined;
-					this.lastClickedCell = { row: this.previousSavedCell.row, column: this.previousSavedCell.column, isEditable };
-					this.focusCell(this.previousSavedCell.row, this.previousSavedCell.column);
-					return Promise.reject(null);
-				});
-		}
-		else {
-			// get the cell we have just immediately clicked (to set as the new active cell in handleChanges), only done if another cell is not currently being processed.
-			this.lastClickedCell = { row, column, isEditable };
-		}
-	}
-
 	private commitEditTask(): Thenable<void> {
 		return this.dataService.commitEdit().then(() => {
 			// Committing was successful, clean the grid
@@ -358,34 +315,35 @@ export class EditDataGridPanel extends GridParentComponent {
 
 	private async submitCellTask(cellToSubmit): Promise<void> {
 		let self = this;
-		let result = await this.submitCurrentCellChange(cellToSubmit);
-		if (result) {
+		try {
+			let result = await this.submitCurrentCellChange(cellToSubmit);
+
 			// Cell update was successful, update the flags
 			self.setCellDirtyState(cellToSubmit.row, cellToSubmit.column, result.cell.isDirty);
 			self.setRowDirtyState(cellToSubmit.row, result.isRowDirty);
 			let nullCommit = this.isNullRow(cellToSubmit.row + 1);
-			let regularCommit = cellToSubmit.row !== this.lastClickedCell.row && this.isRowDirty(cellToSubmit.row);
+			let regularCommit = this.isRowDirty(cellToSubmit.row);
 			if (regularCommit || nullCommit) {
 				await this.commitEditTask().then(() => {
-					if (nullCommit && this.lastClickedCell.row === cellToSubmit.row && this.lastClickedCell.column === cellToSubmit.column) {
-						this.lastClickedCell = { row: cellToSubmit.row + 1, column: cellToSubmit.column, isEditable: true };
+					if (nullCommit && this.table.grid.getActiveCell()?.row === cellToSubmit.Row && this.table.grid.getActiveCell()?.cell === cellToSubmit.column) {
+						this.focusCell(cellToSubmit.row + 1, cellToSubmit.column, true);
 					}
 				},
 					() => {
 						// Committing failed, jump back to the last selected cell
-						this.setCurrentCell(cellToSubmit.row, cellToSubmit.column);
+						// this.setPreviousCell(cellToSubmit.row, cellToSubmit.column);
 						//this.focusCell(cellToSubmit.row, cellToSubmit.column);
 						return Promise.reject(null);
 					});
 			}
-			// At the end of a successful cell select, update the currently selected cell
-			this.setCurrentCell(this.lastClickedCell.row, this.lastClickedCell.column);
+			// At the end of a successful cell select, update the previously selected cell
+			this.setPreviousCell(cellToSubmit.row, cellToSubmit.column);
 			return Promise.resolve();
 			//this.focusCell(this.lastClickedCell.row, this.lastClickedCell.column);
 		}
-		else {
+		catch (error) {
 			// Cell update failed, jump back to the last cell we were on
-			//this.focusCell(cellToSubmit.row, cellToSubmit.column, true);
+			this.focusCell(cellToSubmit.row, cellToSubmit.column, true);
 			return Promise.reject(null);
 		}
 	}
@@ -509,7 +467,6 @@ export class EditDataGridPanel extends GridParentComponent {
 				}
 				if (this.firstRender) {
 					this.resetCurrentCell();
-					this.lastClickedCell = { row: 0, column: 1, isEditable: true };
 					// Re-enable selecting once table has been loaded properly.
 					this.nativeElement.classList.remove('loadingRows');
 					// Need to resize table once its been unhidden.
@@ -531,7 +488,7 @@ export class EditDataGridPanel extends GridParentComponent {
 	private setActive() {
 		if (this.firstRender && this.table) {
 			this.table.setActiveCell(0, 1);
-			this.setCurrentCell(0, 1);
+			this.setPreviousCell(0, 1);
 			this.firstRender = false;
 		}
 	}
@@ -557,12 +514,12 @@ export class EditDataGridPanel extends GridParentComponent {
 		let handled: boolean = false;
 
 		if (e.keyCode === KeyCode.Escape) {
-			if ((this.lastClickedCell && this.isNullRow(this.lastClickedCell.row)) || (this.previousSavedCell && this.isNullRow(this.previousSavedCell.row))) {
+			if ((this.table.grid.getActiveCell() && this.isNullRow(this.table.grid.getActiveCell().cell)) || (this.previousSavedCell && this.isNullRow(this.previousSavedCell.row))) {
 				document.execCommand('selectAll');
 				document.execCommand('delete');
 				document.execCommand('insertText', false, 'NULL');
 				// Focus called here as this revert does not trigger handleChanges (which focuses on last clicked cell at the end).
-				this.focusCell(this.lastClickedCell.row, this.lastClickedCell.column);
+				//this.focusCell(this.lastClickedCell.row, this.lastClickedCell.column);
 			}
 			else {
 				this.noAutoSelectOnRender = true;
@@ -662,20 +619,22 @@ export class EditDataGridPanel extends GridParentComponent {
 				? self.rowIdMappings[cellToAdd.row]
 				: cellToAdd.row;
 
-			let result = await self.dataService.updateCell(sessionRowId, cellToAdd.column - 1, this.newlinePattern ? self.currentEditCellValue.replace('\u0000', this.newlinePattern) : self.currentEditCellValue);
-			if (result) {
-				self.currentEditCellValue = undefined;
-				if (refreshGrid) {
-					self.table.grid.scrollRowIntoView(cellToAdd.row + 1);
+			try {
+				let result = await self.dataService.updateCell(sessionRowId, cellToAdd.column - 1, this.newlinePattern ? self.currentEditCellValue.replace('\u0000', this.newlinePattern) : self.currentEditCellValue);
+				if (result) {
+					self.currentEditCellValue = undefined;
+					if (refreshGrid) {
+						self.table.grid.scrollRowIntoView(cellToAdd.row + 1);
+					}
+					return result;
 				}
-				return result;
 			}
-			else {
+			catch (error) {
 				self.currentEditCellValue = undefined;
 				// Switch lastClickedCell back to the cell to submit.
-				this.lastClickedCell = { row: cellToAdd.row, column: cellToAdd.column, isEditable: true };
+				// this.lastClickedCell = { row: cellToAdd.row, column: cellToAdd.column, isEditable: true };
 
-				return undefined;
+				throw error;
 				//let errorPromise: Thenable<void> = Promise.resolve();
 				// if (refreshGrid) {
 				// 	let message = 'Error: invalid value entered in new row, reverting changes, please enter a valid value.';
@@ -824,7 +783,7 @@ export class EditDataGridPanel extends GridParentComponent {
 
 	private saveViewState(): void {
 		let grid = this.table;
-		let self = this;
+		// let self = this;
 		if (grid) {
 			let gridSelections = grid.getSelectedRanges();
 			let gridObject = grid as any;
@@ -895,7 +854,7 @@ export class EditDataGridPanel extends GridParentComponent {
 		this.currentEditCellValue = undefined;
 	}
 
-	private setCurrentCell(row: number, column: number) {
+	private setPreviousCell(row: number, column: number) {
 		// Only update if we're actually changing cells
 		if (this.previousSavedCell && (row !== this.previousSavedCell.row || column !== this.previousSavedCell.column)) {
 			this.previousSavedCell = {
@@ -998,7 +957,7 @@ export class EditDataGridPanel extends GridParentComponent {
 			}
 
 			applyValue(item, state): void {
-				let activeRow = self.lastClickedCell.row;
+				let activeRow = self.table.grid.getActiveCell().row;
 				let currentRow = self.dataSet.dataRows.at(activeRow);
 				let colIndex = self.getColumnIndex(this._args.column.name);
 				let dataLength: number = self.dataSet.dataRows.getLength();
@@ -1015,7 +974,7 @@ export class EditDataGridPanel extends GridParentComponent {
 			}
 
 			validate(): any {
-				let activeRow = self.lastClickedCell.row;
+				let activeRow = self.table.grid.getActiveCell().row;
 				let result: any = { valid: true, msg: undefined };
 				let colIndex: number = self.getColumnIndex(this._args.column.name);
 				let newValue: any = this._textEditor.getValue();
@@ -1054,13 +1013,7 @@ export class EditDataGridPanel extends GridParentComponent {
 
 		if (this.table) {
 			// Get the active cell we have just clicked to be the new active cell (cell needs to be manually set as active in slickgrid).
-			if (this.lastClickedCell) {
-				activeCell = { row: this.lastClickedCell.row, cell: this.lastClickedCell.column };
-			}
-			else {
-				// Get the last selected cell as the active cell as a backup.
-				activeCell = this.table.grid.getActiveCell();
-			}
+			activeCell = this.table.grid.getActiveCell();
 		}
 
 		if (columnDefinitionChanges && !equals(columnDefinitionChanges.previousValue, columnDefinitionChanges.currentValue)) {
@@ -1139,7 +1092,7 @@ export class EditDataGridPanel extends GridParentComponent {
 			}
 		}
 		if (!this.noAutoSelectOnRender && !this.firstRender) {
-			this.focusCell(this.lastClickedCell.row, this.lastClickedCell.column);
+			this.focusCell(this.table.grid.getActiveCell().row, this.table.grid.getActiveCell().cell);
 		}
 		else {
 			this.noAutoSelectOnRender = false;
@@ -1161,11 +1114,6 @@ export class EditDataGridPanel extends GridParentComponent {
 		});
 		this.table.grid.onBeforeCellEditorDestroy.subscribe((e, args) => {
 			this.onBeforeCellEditorDestroy(args);
-		});
-		// Subscribe to all active cell changes to be able to catch when we tab to the header on the next row
-		this.table.grid.onActiveCellChanged.subscribe((e, args) => {
-			// Emit that we've changed active cells
-			this.onActiveCellChanged(args);
 		});
 		this.table.grid.onContextMenu.subscribe((e, args) => {
 			this.openContextMenu(e, this.dataSet.batchId, this.dataSet.resultId, 0);
