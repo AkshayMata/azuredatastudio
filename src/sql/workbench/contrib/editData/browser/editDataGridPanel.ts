@@ -604,14 +604,14 @@ export class EditDataGridPanel extends GridParentComponent {
 
 	private async submitCurrentCellChange(cellToAdd): Promise<EditUpdateCellResult> {
 		let self = this;
-		let refreshGrid = false;
+		//let refreshGrid = false;
 		if (cellToAdd && cellToAdd.isEditable && this.currentEditCellValue !== undefined && !this.removingNewRow) {
-
-			if (this.isNullRow(cellToAdd.row)) {
-				refreshGrid = true;
-				// We've entered the "new row", so we need to add a row and jump to it
-				await self.addRow(cellToAdd.row);
-			}
+			// TODO - New Row is currently broken, cannot fix easily at the moment.
+			// if (this.isNullRow(cellToAdd.row)) {
+			// 	refreshGrid = true;
+			// 	// We've entered the "new row", so we need to add a row and jump to it
+			// 	await self.addRow(cellToAdd.row);
+			// }
 			// We're exiting a read/write cell after having changed the value, update the cell value in the service
 
 			// Use the mapped row ID if we're on that row
@@ -623,9 +623,11 @@ export class EditDataGridPanel extends GridParentComponent {
 				let result = await self.dataService.updateCell(sessionRowId, cellToAdd.column - 1, this.newlinePattern ? self.currentEditCellValue.replace('\u0000', this.newlinePattern) : self.currentEditCellValue);
 				if (result) {
 					self.currentEditCellValue = undefined;
-					if (refreshGrid) {
-						self.table.grid.scrollRowIntoView(cellToAdd.row + 1);
-					}
+					// TODO - New Row is currently broken, cannot fix easily at the moment.
+					// if (refreshGrid) {
+					// 	await self.refreshGrid();
+					// 	self.table.grid.scrollRowIntoView(cellToAdd.row + 1);
+					// }
 					return result;
 				}
 			}
