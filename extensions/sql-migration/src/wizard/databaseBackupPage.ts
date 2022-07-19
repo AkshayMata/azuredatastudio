@@ -135,6 +135,8 @@ export class DatabaseBackupPage extends MigrationWizardPage {
 		this._networkShareButton = this._view.modelBuilder.radioButton()
 			.withProps({
 				name: buttonGroup,
+				// Being read out lout twice here.. no aria label
+				// could be bug in our code or core ImageComponent
 				label: constants.DATABASE_BACKUP_NC_NETWORK_SHARE_RADIO_LABEL,
 				checked: this.migrationStateModel._databaseBackup.networkContainerType === NetworkContainerType.NETWORK_SHARE,
 				CSSStyles: {

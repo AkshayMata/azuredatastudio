@@ -744,7 +744,8 @@ export class SKURecommendationPage extends MigrationWizardPage {
 			CSSStyles: {
 				...styles.PAGE_TITLE_CSS,
 				'margin-right': '20px'
-			}
+			},
+			ariaLabel: constants.ASSESSMENT_IN_PROGRESS
 		}).component();
 
 		this._progressContainer = this._view.modelBuilder.flexContainer().withLayout({
